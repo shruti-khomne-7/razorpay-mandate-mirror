@@ -31,36 +31,6 @@ Mandate Mirror is an authorization firewall for autonomous AI purchasing agents.
 | **Razorpay (Test Mode)** | Order creation (`/v1/orders`) with mandate/session traceability in `notes`; webhook ingestion. | Never invoked unless Core engine commits a final `CLEAR`. |
 
 ---
-
-## System Architecture
-
-Mandate Mirror separates AI reasoning from authorization. The Buyer Agent and Investigator Agent are advisory only; deterministic verification and the state machine control whether a payment can proceed.
-
-```mermaid
-flowchart LR
-    U(["Principal"]) -->|"natural language intent"| MI["Mandate Issuance<br/>Gemini parse + human confirm"]
-    U -->|"shopping goal"| BA["Buyer Agent<br/>Gemini Call 1: plan purchase"]
-    BA -->|"POST /api/v1/authorize<br/>HTTP only"| G1
-
-    subgraph CORE["Mandate Mirror Core"]
-        direction TB
-        G1["Gate 1<br/>Deterministic Verifier"] -->|"PASS"| G2["Gate 2<br/>Investigator Agent"]
-        G2 -->|"Non-binding recommendation"| G3["Gate 3<br/>Guard Rechecker"]
-        G3 --> SM["Atomic State Commit"]
-    end
-
-    G1 -.->|"FAIL → HARD-BLOCK"| BA
-    G3 -.->|"Override → ESCALATE"| SM
-    SM -->|"CLEAR only"| RP["Razorpay<br/>Test Mode"]
-    RP --> BA
-    BA -->|"Result / explanation"| U
-
-    MI -->|"Signed mandate"| DB[("MongoDB<br/>Mandates + State + Audit")]
-    SM --> DB
-    RP --> DB
-    DB --> DASH["Dashboard"]
----
-
 ## Running the Project
 
 ### Prerequisites
