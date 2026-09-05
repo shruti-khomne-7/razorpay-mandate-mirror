@@ -82,18 +82,6 @@ npm run dev
 ```
 *Dashboard opens on `http://localhost:5173` (or Vite assigned port).*
 
-### Environment Configuration (`backend/.env`)
-```env
-PORT=5000
-NODE_ENV=development
-MANDATE_SECRET_KEY=mandate_mirror_super_secret_issuer_key_2026
-GEMINI_API_KEY=               # Optional: uses deterministic mock agent if absent
-ML_SCORER_URL=http://127.0.0.1:8001/score
-RAZORPAY_MODE=test
-RAZORPAY_KEY_ID=              # Optional test key: falls back to authentic test simulation if placeholder
-RAZORPAY_KEY_SECRET=          # Optional test secret
-RAZORPAY_WEBHOOK_SECRET=rzp_webhook_secret_test_2026
-```
 
 ---
 
