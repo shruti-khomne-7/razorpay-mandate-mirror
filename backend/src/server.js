@@ -23,16 +23,27 @@ const PORT = process.env.PORT || 5000;
 
 app.use(cors());
 
+// Log every request so we can see what's actually hitting the server
+app.use((req, res, next) => {
+  console.log(`[REQ] ${req.method} ${req.originalUrl}`);
+  next();
+});
+
 // Webhook signatures cover the original bytes, so this route must be parsed
 // before the JSON middleware transforms its body.
 app.post('/api/v1/webhooks/razorpay', express.raw({ type: 'application/json' }), async (req, res) => {
-  const result = await handleRazorpayWebhook({
-    rawBody: req.body,
-    signature: req.headers['x-razorpay-signature'],
-    eventId: req.headers['x-razorpay-event-id'],
-    secret: process.env.RAZORPAY_WEBHOOK_SECRET
-  });
-  return res.status(result.status).json(result);
+  try {
+    const result = await handleRazorpayWebhook({
+      rawBody: req.body,
+      signature: req.headers['x-razorpay-signature'],
+      eventId: req.headers['x-razorpay-event-id'],
+      secret: process.env.RAZORPAY_WEBHOOK_SECRET
+    });
+    return res.status(result.status).json(result);
+  } catch (err) {
+    console.error('[Webhook Error]', err);
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 app.use(express.json());
@@ -40,6 +51,8 @@ app.use(express.json());
 // Initialize MongoDB and load persistent state
 connectMongo().then(() => {
   loadMongoIntoStore(store);
+}).catch(err => {
+  console.error('[MongoDB Connection Error]', err);
 });
 
 // Background sweep for stale in-flight idempotency claims
@@ -60,6 +73,19 @@ app.get('/health', (req, res) => {
     version: '2.0.0',
     timestamp: new Date().toISOString()
   });
+});
+
+// Catch-all for unmatched routes (so 404s are visible instead of silent)
+app.use((req, res) => {
+  console.warn(`[404] No route matched: ${req.method} ${req.originalUrl}`);
+  res.status(404).json({ error: 'Not found', path: req.originalUrl });
+});
+
+// Global error handler - catches anything thrown/rejected in route handlers
+// that wasn't already caught, so the process doesn't crash silently
+app.use((err, req, res, next) => {
+  console.error('[Unhandled Error]', err);
+  res.status(500).json({ error: err.message || 'Internal server error' });
 });
 
 if (process.env.NODE_ENV !== 'test') {

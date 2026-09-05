@@ -92,6 +92,16 @@ function parseNaturalMandateMock(naturalText, principalId) {
     agentId = 'grocery_agent';
   }
 
+  // 6. Velocity limit (max transaction count in the window)
+  let velocityLimit = null;
+  const velocityMatch = text.match(/(?:max|up to|limit of)\s*(\d+)\s*(?:transactions|orders|txns|times)/i);
+  if (velocityMatch) {
+    velocityLimit = parseInt(velocityMatch[1], 10);
+  } else {
+    velocityLimit = 100; // sane default transaction-count ceiling
+    warnings.push("Velocity limit (max transaction count) was not specified; inferred default of 100 transactions.");
+  }
+
   const mandateId = `mandate_nl_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
 
   const structuredMandate = {
@@ -103,6 +113,7 @@ function parseNaturalMandateMock(naturalText, principalId) {
     cumulative_window: windowDuration,
     allowed_categories: allowedCategories,
     merchant_allowlist: merchantAllowlist.length > 0 ? merchantAllowlist : null,
+    velocity_limit: velocityLimit,
     valid_from: now.toISOString(),
     valid_until: validUntil.toISOString(),
     mandate_version: 1
@@ -166,6 +177,7 @@ OUTPUT SCHEMA (JSON ONLY):
     "cumulative_window": string (ISO 8601 duration: "P1M" for monthly, "P1D" for daily, "PT1H" for hourly),
     "allowed_categories": array of string (lowercase normalized, e.g. ["grocery", "food_delivery"]),
     "merchant_allowlist": array of string or null (lowercase snake_cased merchant ids, e.g. ["blinkit", "zepto", "bigbasket"]),
+    "velocity_limit": integer (max number of transactions allowed in the cumulative_window; if not mentioned, default to 100),
     "valid_from": ISO string,
     "valid_until": ISO string,
     "mandate_version": 1
@@ -190,6 +202,10 @@ Strictly output valid JSON.`;
       }
       if (!Array.isArray(parsed.warnings)) {
         parsed.warnings = [];
+      }
+      if (!Number.isSafeInteger(parsed.structured_mandate.velocity_limit) || parsed.structured_mandate.velocity_limit <= 0) {
+        parsed.structured_mandate.velocity_limit = 100;
+        parsed.warnings.push("Velocity limit (max transaction count) was not specified; inferred default of 100 transactions.");
       }
 
       logDecision({

@@ -9,6 +9,12 @@ Mandate Mirror is an authorization firewall for autonomous AI purchasing agents.
 > **Mandate Mirror maintains a versioned, concurrency-safe state machine per (principal, agent, mandate) and authorizes each request against the cumulative trajectory of everything that mandate has already done — catching violations that are invisible at the single-transaction level and only exist across a sequence.**
 
 ---
+## System Architecture
+
+![Mandate Mirror Architecture](docs/architecture.png)
+
+---
+
 
 ## What Mandate Mirror Is Not
 

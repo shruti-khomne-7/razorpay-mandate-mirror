@@ -1,4 +1,3 @@
-
 import express from 'express';
 import { runFullBenchmarkSuite } from '../../../benchmarks/run_benchmark.js';
 import { registerMandate, attemptAtomicSpend, getStateSnapshot } from '../core/stateMachine.js';
@@ -35,7 +34,7 @@ router.post('/concurrency-race', async (req, res) => {
       mandate_id: mandateId,
       principal_id: 'race_principal_demo',
       agent_id: 'concurrency_bot',
-      spend_cap_per_txn: 200000,
+      spend_cap_per_txn: 500000,
       cumulative_cap: cumulativeCap,
       cumulative_window: 'P1M',
       velocity_limit: 100,
@@ -44,12 +43,15 @@ router.post('/concurrency-race', async (req, res) => {
       valid_until: '2030-01-01T00:00:00.000Z'
     }));
 
-    await attemptAtomicSpend({
+    const seedResult = await attemptAtomicSpend({
       mandate_id: mandateId,
       amount_paise: initialSpend,
       category: 'grocery',
       nonce: `seed_nonce_${mandateId}`
     });
+    if (!seedResult.success) {
+      throw new Error(`Seed spend failed unexpectedly: ${seedResult.reason} — ${seedResult.details}`);
+    }
 
     const requestCount = 20;
     const requestAmountPaise = 15000;
@@ -78,7 +80,7 @@ router.post('/concurrency-race', async (req, res) => {
 
     return res.json({
       mandate_id: mandateId,
-      initial_remaining_cap_paise: 20000,
+      initial_remaining_cap_paise: cumulativeCap - initialSpend,
       requested_amount_per_thread_paise: requestAmountPaise,
       total_concurrent_requests: requestCount,
       winners_count: winners.length,
