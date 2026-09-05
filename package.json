@@ -1,0 +1,14 @@
+﻿{
+  "name": "mandate-mirror-root",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "npm --prefix backend test",
+    "test:concurrency": "npm --prefix backend test tests/concurrency.test.js",
+    "benchmark": "node benchmarks/run_benchmark.js",
+    "benchmark:claim-b": "python ml-scorer/train_baseline.py",
+    "server": "npm --prefix backend start",
+    "dashboard": "npm --prefix frontend dev"
+  }
+}

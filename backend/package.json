@@ -1,0 +1,24 @@
+{
+  "name": "mandate-mirror-backend",
+  "version": "1.0.0",
+  "description": "Pre-Authorization & AI Risk Engine for Autonomous Purchasing Agents",
+  "main": "src/server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node --dns-result-order=ipv4first src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test tests/*.test.js"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "axios": "^1.7.9",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "fast-json-stable-stringify": "^2.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongodb": "^7.6.0",
+    "razorpay": "^2.9.5",
+    "uuid": "^11.0.5"
+  }
+}
