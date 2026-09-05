@@ -3,8 +3,10 @@ import express from 'express';
 import { runBuyerAgent } from '../agent/buyerAgent.js';
 import { logDecision } from '../core/auditLog.js';
 import { store } from '../db/store.js';
+import { requirePrincipalAuth } from '../middleware/principalAuth.js';
 
 const router = express.Router();
+router.use(requirePrincipalAuth);
 
 /**
  * Buyer Agent Autonomous Shopping Endpoint (M3a)
@@ -31,6 +33,9 @@ router.post('/shop', async (req, res) => {
         message: `No active mandate configuration found for ID ${mandate_id}. Please issue and confirm a mandate first.`
       });
     }
+    if (mandateConfig.principal_id !== req.auth.principal_id) {
+      return res.status(403).json({ error: 'MANDATE_OWNERSHIP_VIOLATION' });
+    }
 
     const mandate = mandateConfig.raw_mandate || mandateConfig;
 
@@ -48,7 +53,8 @@ router.post('/shop', async (req, res) => {
       goal,
       mandate,
       agent_id: agent_id || mandate.agent_id,
-      targetUrl
+      targetUrl,
+      apiKey: req.get('x-api-key') || req.get('authorization')?.replace(/^Bearer\s+/i, '')
     });
 
     return res.json(result);

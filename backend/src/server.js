@@ -22,6 +22,19 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 app.use(cors());
+
+// Webhook signatures cover the original bytes, so this route must be parsed
+// before the JSON middleware transforms its body.
+app.post('/api/v1/webhooks/razorpay', express.raw({ type: 'application/json' }), async (req, res) => {
+  const result = await handleRazorpayWebhook({
+    rawBody: req.body,
+    signature: req.headers['x-razorpay-signature'],
+    eventId: req.headers['x-razorpay-event-id'],
+    secret: process.env.RAZORPAY_WEBHOOK_SECRET
+  });
+  return res.status(result.status).json(result);
+});
+
 app.use(express.json());
 
 // Initialize MongoDB and load persistent state
@@ -38,22 +51,6 @@ app.use('/api/v1/mandates', mandatesRouter);
 app.use('/api/v1/buyer', buyerRouter);
 app.use('/api/v1/audit', auditRouter);
 app.use('/api/v1/evaluation', evaluationRouter);
-
-// Razorpay Webhook Ingestion Route
-app.post('/api/v1/webhooks/razorpay', async (req, res) => {
-  const signature = req.headers['x-razorpay-signature'];
-  const eventId = req.headers['x-razorpay-event-id'];
-  const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
-
-  const result = await handleRazorpayWebhook({
-    rawBody: req.body,
-    signature,
-    eventId,
-    secret
-  });
-
-  return res.json(result);
-});
 
 // Health check
 app.get('/health', (req, res) => {

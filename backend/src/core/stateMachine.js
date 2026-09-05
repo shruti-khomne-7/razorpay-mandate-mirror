@@ -41,6 +41,43 @@ export function computeBucketKey(mandateId, periodKey) {
 
 const DEFAULT_RESERVATION_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
+function isPositiveSafeInteger(value) {
+  return Number.isSafeInteger(value) && value > 0;
+}
+
+function isValidTimestamp(value) {
+  return typeof value === 'string' && Number.isFinite(Date.parse(value));
+}
+
+function validateMandateNumbers(mandate) {
+  if (!isPositiveSafeInteger(mandate?.spend_cap_per_txn)) return 'INVALID_PER_TXN_CAP';
+  if (!isPositiveSafeInteger(mandate?.cumulative_cap)) return 'INVALID_CUMULATIVE_CAP';
+  if (!isPositiveSafeInteger(mandate?.velocity_limit)) return 'INVALID_VELOCITY_LIMIT';
+  if (!isValidTimestamp(mandate?.valid_from) || !isValidTimestamp(mandate?.valid_until)) return 'INVALID_VALIDITY_WINDOW';
+  if (Date.parse(mandate.valid_until) <= Date.parse(mandate.valid_from)) return 'INVALID_VALIDITY_WINDOW';
+  return null;
+}
+
+function validateSpendRequest(config, amount_paise, nowMs) {
+  if (config.status !== 'ACTIVE') {
+    return { success: false, reason: `MANDATE_${config.status}`, details: `Mandate is ${config.status}` };
+  }
+  if (!Number.isSafeInteger(amount_paise) || amount_paise <= 0) {
+    return { success: false, reason: 'INVALID_TRANSACTION_AMOUNT', details: 'amount_paise must be a positive safe integer.' };
+  }
+  if (amount_paise > config.spend_cap_per_txn) {
+    return { success: false, reason: 'PER_TXN_CAP_EXCEEDED', details: `${amount_paise} paise exceeds per-txn cap of ${config.spend_cap_per_txn} paise` };
+  }
+  const validFrom = Date.parse(config.valid_from);
+  const validUntil = Date.parse(config.valid_until);
+  if (!Number.isFinite(validFrom) || !Number.isFinite(validUntil) || validUntil <= validFrom) {
+    return { success: false, reason: 'INVALID_VALIDITY_WINDOW', details: 'Stored mandate validity window is invalid.' };
+  }
+  if (nowMs < validFrom) return { success: false, reason: 'MANDATE_NOT_YET_VALID', details: `Mandate is valid from ${config.valid_from}` };
+  if (nowMs > validUntil) return { success: false, reason: 'MANDATE_EXPIRED', details: `Mandate expired at ${config.valid_until}` };
+  return null;
+}
+
 /**
  * Register a mandate's configuration.
  * Config is stored separately from spend buckets — no counters live here.
@@ -61,6 +98,11 @@ export function registerMandate(mandate) {
     );
   }
 
+  const numericValidationError = validateMandateNumbers(mandate);
+  if (numericValidationError) {
+    throw new Error(`REGISTER_REJECTED: mandate ${mandate?.mandate_id || '(unknown)'} has ${numericValidationError}.`);
+  }
+
   const existing = store.mandateConfigs.get(mandate.mandate_id);
   if (existing && (mandate.mandate_version || 1) <= existing.version) {
     if (mandate.signature) {
@@ -79,11 +121,11 @@ export function registerMandate(mandate) {
     cumulative_cap: mandate.cumulative_cap,
     cumulative_window: mandate.cumulative_window || 'P30D',
     period_type: windowToPeriodType(mandate.cumulative_window),
-    velocity_limit: mandate.velocity_limit || 100,
+    velocity_limit: mandate.velocity_limit,
     allowed_categories: mandate.allowed_categories || [],
     merchant_allowlist: mandate.merchant_allowlist || null,
-    valid_from: mandate.valid_from || new Date().toISOString(),
-    valid_until: mandate.valid_until || new Date(Date.now() + 365 * 86400000).toISOString(),
+    valid_from: mandate.valid_from,
+    valid_until: mandate.valid_until,
     signature: mandate.signature,
     raw_mandate: { ...mandate },
     status: 'ACTIVE',
@@ -157,11 +199,9 @@ export async function attemptAtomicSpend({
     return { success: false, reason: 'MANDATE_NOT_FOUND', details: `No config for ${mandate_id}` };
   }
 
-  if (config.status !== 'ACTIVE') {
-    return { success: false, reason: `MANDATE_${config.status}`, details: `Mandate is ${config.status}` };
-  }
-
   const nowMs = _testNowMs ?? Date.now();
+  const requestValidationError = validateSpendRequest(config, amount_paise, nowMs);
+  if (requestValidationError) return requestValidationError;
   const periodKey = computePeriodKey(config.period_type, nowMs);
   const bucketKey = computeBucketKey(mandate_id, periodKey);
 
@@ -187,6 +227,7 @@ export async function attemptAtomicSpend({
       bucket_key: bucketKey,
       amount_paise,
       cumulative_cap: config.cumulative_cap,
+      velocity_limit: config.velocity_limit,
       nonce,
       category,
       nowMs,
@@ -238,6 +279,14 @@ export async function attemptAtomicSpend({
           success: false,
           reason: 'REPLAY_NONCE_DETECTED',
           details: `Nonce ${nonce} already consumed`
+        };
+      }
+
+      if ((effectiveBucket.transaction_count || 0) + 1 > config.velocity_limit) {
+        return {
+          success: false,
+          reason: 'VELOCITY_LIMIT_EXCEEDED',
+          details: `Count ${(effectiveBucket.transaction_count || 0) + 1} exceeds velocity limit ${config.velocity_limit}`
         };
       }
 
@@ -293,20 +342,6 @@ export async function attemptAtomicSpend({
           details: `Nonce ${nonce} already consumed`
         };
       }
-    }
-
-    if (amount_paise > config.spend_cap_per_txn) {
-      logDecision({
-        event: 'SPEND_ATTEMPT', mandate_id, bucket_key: bucketKey,
-        session_id, result: 'PER_TXN_CAP_EXCEEDED',
-        details: `${amount_paise} > ${config.spend_cap_per_txn}`,
-        timestamp: new Date(nowMs).toISOString()
-      });
-      return {
-        success: false,
-        reason: 'PER_TXN_CAP_EXCEEDED',
-        details: `${amount_paise} paise exceeds per-txn cap of ${config.spend_cap_per_txn} paise`
-      };
     }
 
     const effectiveTotal = bucket.cumulative_spend + bucket.pending_spend + amount_paise;
@@ -391,6 +426,8 @@ export async function reservePendingSpend({
   }
 
   const nowMs = _testNowMs ?? Date.now();
+  const requestValidationError = validateSpendRequest(config, amount_paise, nowMs);
+  if (requestValidationError) return requestValidationError;
   const periodKey = computePeriodKey(config.period_type, nowMs);
   const bucketKey = computeBucketKey(mandate_id, periodKey);
   const effectiveTtl = ttl_ms ?? DEFAULT_RESERVATION_TTL_MS;

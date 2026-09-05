@@ -2,7 +2,16 @@
 import crypto from 'crypto';
 import stringify from 'fast-json-stable-stringify';
 
-export const DEFAULT_ISSUER_SECRET = process.env.MANDATE_SECRET_KEY || 'mandate_mirror_super_secret_issuer_key_2026';
+// A deployment must provide its own secret. A source-controlled fallback would
+// let anyone forge a valid mandate outside the service.
+export const DEFAULT_ISSUER_SECRET = process.env.MANDATE_SECRET_KEY;
+
+function issuerSecret(secretKey) {
+  if (!secretKey || typeof secretKey !== 'string' || secretKey.length < 16) {
+    throw new Error('MANDATE_SECRET_KEY must be configured with at least 16 characters.');
+  }
+  return secretKey;
+}
 
 /**
  * Extracts signed fields from a mandate object (excludes existing signature)
@@ -16,6 +25,7 @@ export function getCanonicalMandatePayload(mandate) {
  * Digitally signs a mandate using HMAC-SHA256 over its canonical JSON representation
  */
 export function signMandate(mandate, secretKey = DEFAULT_ISSUER_SECRET) {
+  secretKey = issuerSecret(secretKey);
   const canonicalString = getCanonicalMandatePayload(mandate);
   const signature = crypto
     .createHmac('sha256', secretKey)
@@ -36,9 +46,16 @@ export function verifyMandateSignature(mandate, secretKey = DEFAULT_ISSUER_SECRE
     return { valid: false, reason: 'MISSING_SIGNATURE' };
   }
 
+  let signingSecret;
+  try {
+    signingSecret = issuerSecret(secretKey);
+  } catch {
+    return { valid: false, reason: 'SIGNING_SECRET_NOT_CONFIGURED' };
+  }
+
   const canonicalString = getCanonicalMandatePayload(mandate);
   const expectedSignature = crypto
-    .createHmac('sha256', secretKey)
+    .createHmac('sha256', signingSecret)
     .update(canonicalString)
     .digest('hex');
 

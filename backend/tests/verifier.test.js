@@ -72,6 +72,31 @@ describe('M2 — Cryptographic Signing, Gate 1 & Guard Rechecker Suite', () => {
     assert.equal(result.rule_cited, 'PER_TXN_CAP_BREACH');
   });
 
+  test('Gate 1: malformed client timestamp cannot bypass an expired mandate', () => {
+    const expiredMandate = signMandate({
+      ...sampleMandate,
+      valid_from: '2020-01-01T00:00:00.000Z',
+      valid_until: '2020-01-02T00:00:00.000Z'
+    }, secretKey);
+    const result = verifyDeterministicBounds({
+      mandate: expiredMandate,
+      transaction: { amount_paise: 100, category: 'grocery', merchant: 'blinkit', timestamp: 'not-a-date' },
+      secretKey
+    });
+    assert.equal(result.passed, false);
+    assert.equal(result.rule_cited, 'INVALID_TRANSACTION_TIMESTAMP');
+  });
+
+  test('Gate 1: non-integer monetary amounts are hard-blocked', () => {
+    const result = verifyDeterministicBounds({
+      mandate: sampleMandate,
+      transaction: { amount_paise: 'not-a-number', category: 'grocery', merchant: 'blinkit' },
+      secretKey
+    });
+    assert.equal(result.passed, false);
+    assert.equal(result.rule_cited, 'INVALID_TRANSACTION_AMOUNT');
+  });
+
   // 4. Cumulative Cap Breach (via State Snapshot)
   test('Gate 1: Cumulative cap breach against state snapshot is deterministic HARD-BLOCK', () => {
     const txn = {

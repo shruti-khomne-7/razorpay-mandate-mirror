@@ -105,17 +105,18 @@ export async function runBuyerAgent({
   goal,
   mandate,
   agent_id,
-  targetUrl = 'http://127.0.0.1:5000/api/v1/authorize'
+  targetUrl = 'http://127.0.0.1:5000/api/v1/authorize',
+  apiKey
 }) {
   const agentId = agent_id || mandate?.agent_id || 'buyer_agent_01';
-  const apiKey = process.env.GEMINI_API_KEY;
+  const geminiApiKey = process.env.GEMINI_API_KEY;
 
   // ────────────────────────────────────────────────────────────────────
   // Call 1: Purchase Planning Decision
   // ────────────────────────────────────────────────────────────────────
   let purchasePlan = null;
 
-  if (apiKey && apiKey.trim() !== '') {
+  if (geminiApiKey && geminiApiKey.trim() !== '') {
     try {
       const prompt1 = `You are an autonomous AI purchasing agent acting on behalf of a principal.
 Goal: "${goal}"
@@ -193,7 +194,8 @@ OUTPUT JSON ONLY:
       {
         headers: {
           'Content-Type': 'application/json',
-          'X-Request-Id': requestId
+          'X-Request-Id': requestId,
+          'X-API-Key': apiKey
         },
         timeout: 30000
       }
@@ -229,7 +231,7 @@ OUTPUT JSON ONLY:
   let principalExplanation = null;
 
   if (authOutcome.decision !== 'CLEAR') {
-    if (apiKey && apiKey.trim() !== '') {
+    if (geminiApiKey && geminiApiKey.trim() !== '') {
       try {
         const prompt2 = `You are a helpful personal purchasing AI assistant explaining a blocked payment to your non-technical user (principal).
 The pre-authorization gateway "Mandate Mirror" blocked the checkout.

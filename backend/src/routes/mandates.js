@@ -5,8 +5,45 @@ import { registerMandate, getStateSnapshot } from '../core/stateMachine.js';
 import { parseNaturalLanguageMandate } from '../core/mandateIssuance.js';
 import { logDecision } from '../core/auditLog.js';
 import { store } from '../db/store.js';
+import { persistMandateConfig } from '../db/mongo.js';
+import { requirePrincipalAuth } from '../middleware/principalAuth.js';
 
 const router = express.Router();
+
+// P0: every mandate operation is principal-authenticated and ownership-bound.
+router.use(requirePrincipalAuth);
+
+function requireOwnedMandate(mandateId, principalId) {
+  const existing = store.mandateConfigs.get(mandateId);
+  if (existing && existing.principal_id !== principalId) {
+    const err = new Error('MANDATE_OWNERSHIP_VIOLATION');
+    err.status = 403;
+    throw err;
+  }
+  return existing;
+}
+
+function prepareServerMandate(rawMandate, principalId) {
+  if (!rawMandate || !rawMandate.mandate_id || !rawMandate.agent_id) {
+    const err = new Error('INVALID_PAYLOAD');
+    err.status = 400;
+    throw err;
+  }
+
+  const existing = requireOwnedMandate(rawMandate.mandate_id, principalId);
+  // Version, signature, status, and timestamps are server-derived. Never sign
+  // attacker-controlled copies of these fields.
+  const {
+    signature, mandate_version, status, created_at, updated_at, raw_mandate,
+    period_type, principal_id, ...clientFields
+  } = rawMandate;
+  return {
+    ...clientFields,
+    mandate_id: rawMandate.mandate_id,
+    principal_id: principalId,
+    mandate_version: existing ? existing.version + 1 : 1
+  };
+}
 
 /**
  * Natural Language Mandate Parsing (M3b)
@@ -17,12 +54,12 @@ const router = express.Router();
  */
 router.post('/parse', async (req, res) => {
   try {
-    const { natural_text, principal_id } = req.body;
+    const { natural_text } = req.body;
     if (!natural_text || !natural_text.trim()) {
       return res.status(400).json({ error: 'MISSING_TEXT', message: 'natural_text is required' });
     }
 
-    const result = await parseNaturalLanguageMandate({ natural_text, principal_id });
+    const result = await parseNaturalLanguageMandate({ natural_text, principal_id: req.auth.principal_id });
     if (!result.success) {
       return res.status(422).json(result);
     }
@@ -46,18 +83,11 @@ router.post('/parse', async (req, res) => {
  */
 router.post('/confirm', async (req, res) => {
   try {
-    const { structured_mandate, principal_id } = req.body;
-    if (!structured_mandate || !structured_mandate.mandate_id) {
-      return res.status(400).json({ error: 'INVALID_PAYLOAD', message: 'Valid structured_mandate is required' });
-    }
-
-    // Bind principal_id
-    if (principal_id) {
-      structured_mandate.principal_id = principal_id;
-    }
+    const { structured_mandate } = req.body;
+    const serverMandate = prepareServerMandate(structured_mandate, req.auth.principal_id);
 
     // 1. Cryptographically sign the mandate
-    const signedMandate = signMandate(structured_mandate);
+    const signedMandate = signMandate(serverMandate);
 
     // 2. Register into State Machine
     const registeredConfig = registerMandate(signedMandate);
@@ -81,7 +111,7 @@ router.post('/confirm', async (req, res) => {
       config: registeredConfig
     });
   } catch (err) {
-    return res.status(500).json({ error: 'CONFIRMATION_FAILED', message: err.message });
+    return res.status(err.status || 500).json({ error: err.message === 'INVALID_PAYLOAD' ? 'INVALID_PAYLOAD' : 'CONFIRMATION_FAILED', message: err.message });
   }
 });
 
@@ -91,12 +121,8 @@ router.post('/confirm', async (req, res) => {
  */
 router.post('/', async (req, res) => {
   try {
-    const rawMandate = req.body;
-    if (!rawMandate.mandate_id || !rawMandate.principal_id || !rawMandate.agent_id) {
-      return res.status(400).json({ error: 'MISSING_FIELDS', message: 'mandate_id, principal_id, and agent_id are required' });
-    }
-
-    const signedMandate = rawMandate.signature ? rawMandate : signMandate(rawMandate);
+    const serverMandate = prepareServerMandate(req.body, req.auth.principal_id);
+    const signedMandate = signMandate(serverMandate);
     const config = registerMandate(signedMandate);
 
     return res.status(201).json({
@@ -105,7 +131,7 @@ router.post('/', async (req, res) => {
       config
     });
   } catch (err) {
-    return res.status(500).json({ error: 'REGISTRATION_FAILED', message: err.message });
+    return res.status(err.status || 500).json({ error: err.message === 'INVALID_PAYLOAD' ? 'INVALID_PAYLOAD' : 'REGISTRATION_FAILED', message: err.message });
   }
 });
 
@@ -114,7 +140,9 @@ router.post('/', async (req, res) => {
  * GET /api/v1/mandates
  */
 router.get('/', (req, res) => {
-  const configs = Array.from(store.mandateConfigs.values());
+  const configs = Array.from(store.mandateConfigs.values())
+    .filter(config => config.principal_id === req.auth.principal_id)
+    .map(({ signature, raw_mandate, ...config }) => config);
   return res.json({ mandates: configs });
 });
 
@@ -124,6 +152,11 @@ router.get('/', (req, res) => {
  */
 router.get('/:id', async (req, res) => {
   const mandateId = req.params.id;
+  try {
+    requireOwnedMandate(mandateId, req.auth.principal_id);
+  } catch (err) {
+    return res.status(err.status || 500).json({ error: err.message });
+  }
   const snapshot = getStateSnapshot(mandateId);
   if (!snapshot) {
     return res.status(404).json({ error: 'MANDATE_NOT_FOUND', message: `Mandate ${mandateId} does not exist.` });
@@ -212,9 +245,18 @@ router.post('/:id/status', async (req, res) => {
   if (!config) {
     return res.status(404).json({ error: 'MANDATE_NOT_FOUND' });
   }
+  if (config.principal_id !== req.auth.principal_id) {
+    return res.status(403).json({ error: 'MANDATE_OWNERSHIP_VIOLATION' });
+  }
 
   config.status = status;
   config.updated_at = new Date().toISOString();
+  try {
+    // P1: await durable persistence before reporting a status transition.
+    await persistMandateConfig(config);
+  } catch (err) {
+    return res.status(503).json({ error: 'STATUS_PERSIST_FAILED', message: err.message });
+  }
 
   logDecision({
     event: 'MANDATE_STATUS_UPDATED',

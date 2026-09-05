@@ -9,8 +9,12 @@ import { recheckAgentRecommendation } from '../agent/guardRechecker.js';
 import { recordAuditEntry } from '../core/auditChain.js';
 import { createRazorpayOrder, executeDomesticCardPayment, fetchRazorpayOrder } from '../payments/razorpayClient.js';
 import { logDecision } from '../core/auditLog.js';
+import { store } from '../db/store.js';
+import { requirePrincipalAuth } from '../middleware/principalAuth.js';
 
 const router = express.Router();
+
+router.use(requirePrincipalAuth);
 
 /**
  * Central Pre-Authorization Gateway Endpoint
@@ -20,7 +24,7 @@ const router = express.Router();
 router.post('/', async (req, res) => {
   const sessionId = req.body.session_id || `sess_${uuidv4().substring(0, 8)}`;
   const requestId = req.headers['x-request-id'] || req.body.request_id || sessionId;
-  const { mandate, transaction } = req.body;
+  let { mandate, transaction } = req.body;
 
   // Detect SSE streaming request
   const isStreaming = req.headers.accept === 'text/event-stream' || req.query.stream === 'true';
@@ -52,6 +56,16 @@ router.post('/', async (req, res) => {
   }
 
   const mandateId = mandate.mandate_id;
+  const registeredMandate = store.mandateConfigs.get(mandateId);
+  if (!registeredMandate) {
+    return res.status(404).json({ error: 'MANDATE_NOT_FOUND', message: 'The mandate must be registered before authorization.' });
+  }
+  if (registeredMandate.principal_id !== req.auth.principal_id) {
+    return res.status(403).json({ error: 'MANDATE_OWNERSHIP_VIOLATION' });
+  }
+  // State-owned, server-signed mandate data is authoritative; never evaluate
+  // policy fields supplied by an authorization caller.
+  mandate = registeredMandate.raw_mandate || registeredMandate;
 
   // 1. Upstream 3-State Idempotency Check (M1 fix)
   const claim = await claimRequest(mandateId, requestId);

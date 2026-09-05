@@ -178,7 +178,8 @@ export default function LiveBuyerAgent({ onPurchaseCompleted }) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Accept': 'text/event-stream'
+          'Accept': 'text/event-stream',
+          'X-API-Key': import.meta.env.VITE_MANDATE_API_KEY
         },
         body: JSON.stringify({
           mandate: testMandate,

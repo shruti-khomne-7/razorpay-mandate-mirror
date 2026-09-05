@@ -71,6 +71,31 @@ export function verifyDeterministicBounds({
     }
   }
 
+  // Monetary limits and velocity are security boundaries, never coercible UI values.
+  const numericFields = ['spend_cap_per_txn', 'cumulative_cap'];
+  for (const field of numericFields) {
+    if (!Number.isSafeInteger(mandate[field]) || mandate[field] <= 0) {
+      const failure = {
+        passed: false,
+        decision: 'HARD-BLOCK',
+        rule_cited: 'INVALID_MANDATE_NUMERIC_FIELD',
+        reason: `Mandate field ${field} must be a positive safe integer`
+      };
+      logDecision({ event: 'GATE1_CHECK', mandate_id: mandate.mandate_id, session_id, result: 'HARD-BLOCK', details: failure });
+      return failure;
+    }
+  }
+  if (mandate.velocity_limit !== undefined && (!Number.isSafeInteger(mandate.velocity_limit) || mandate.velocity_limit <= 0)) {
+    const failure = {
+      passed: false,
+      decision: 'HARD-BLOCK',
+      rule_cited: 'INVALID_MANDATE_NUMERIC_FIELD',
+      reason: 'Mandate velocity_limit must be a positive safe integer'
+    };
+    logDecision({ event: 'GATE1_CHECK', mandate_id: mandate.mandate_id, session_id, result: 'HARD-BLOCK', details: failure });
+    return failure;
+  }
+
   // 2. Cryptographic Signature Verification
   if (mandate.signature) {
     const sigCheck = verifyMandateSignature(mandate, secretKey);
@@ -108,8 +133,33 @@ export function verifyDeterministicBounds({
   }
 
   // 3. Temporal Expiry Check
-  const now = transaction?.timestamp ? new Date(transaction.timestamp).getTime() : Date.now();
-  if (mandate.valid_from && now < new Date(mandate.valid_from).getTime()) {
+  // The server clock is authoritative. A client timestamp is trace metadata
+  // only, but must still parse correctly when supplied.
+  if (transaction?.timestamp !== undefined && !Number.isFinite(Date.parse(transaction.timestamp))) {
+    const failure = {
+      passed: false,
+      decision: 'HARD-BLOCK',
+      rule_cited: 'INVALID_TRANSACTION_TIMESTAMP',
+      reason: 'transaction.timestamp must be a valid ISO-8601 date when supplied'
+    };
+    logDecision({ event: 'GATE1_CHECK', mandate_id: mandate.mandate_id, session_id, result: 'HARD-BLOCK', details: failure });
+    return failure;
+  }
+  const now = Date.now();
+  const validFrom = mandate.valid_from ? Date.parse(mandate.valid_from) : null;
+  const validUntil = mandate.valid_until ? Date.parse(mandate.valid_until) : null;
+  if ((mandate.valid_from && !Number.isFinite(validFrom)) || (mandate.valid_until && !Number.isFinite(validUntil)) ||
+      (validFrom !== null && validUntil !== null && validUntil <= validFrom)) {
+    const failure = {
+      passed: false,
+      decision: 'HARD-BLOCK',
+      rule_cited: 'INVALID_MANDATE_VALIDITY_WINDOW',
+      reason: 'Mandate validity dates must form a valid increasing interval'
+    };
+    logDecision({ event: 'GATE1_CHECK', mandate_id: mandate.mandate_id, session_id, result: 'HARD-BLOCK', details: failure });
+    return failure;
+  }
+  if (validFrom !== null && now < validFrom) {
     const failure = {
       passed: false,
       decision: 'HARD-BLOCK',
@@ -126,7 +176,7 @@ export function verifyDeterministicBounds({
     return failure;
   }
 
-  if (mandate.valid_until && now > new Date(mandate.valid_until).getTime()) {
+  if (validUntil !== null && now > validUntil) {
     const failure = {
       passed: false,
       decision: 'HARD-BLOCK',
@@ -144,16 +194,12 @@ export function verifyDeterministicBounds({
   }
 
   // 4. Per-Transaction Spending Ceiling Check
-  const amountPaise = transaction?.amount_paise !== undefined
-    ? transaction.amount_paise
-    : (transaction?.amount ? Math.round(transaction.amount * 100) : 0);
-
-  if (amountPaise <= 0) {
+  if (transaction?.amount_paise === undefined || !Number.isSafeInteger(transaction.amount_paise) || transaction.amount_paise <= 0) {
     const failure = {
       passed: false,
       decision: 'HARD-BLOCK',
       rule_cited: 'INVALID_TRANSACTION_AMOUNT',
-      reason: 'Transaction amount must be positive'
+      reason: 'transaction.amount_paise must be a positive safe integer'
     };
     logDecision({
       event: 'GATE1_CHECK',
@@ -164,6 +210,7 @@ export function verifyDeterministicBounds({
     });
     return failure;
   }
+  const amountPaise = transaction.amount_paise;
 
   if (amountPaise > mandate.spend_cap_per_txn) {
     const failure = {

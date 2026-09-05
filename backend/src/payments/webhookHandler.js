@@ -17,28 +17,29 @@ export async function handleRazorpayWebhook({
   rawBody,
   signature,
   eventId,
-  secret = process.env.RAZORPAY_WEBHOOK_SECRET || 'rzp_webhook_secret_test_2026'
+  secret = process.env.RAZORPAY_WEBHOOK_SECRET
 }) {
   // 1. Webhook Signature Verification
-  const bodyString = typeof rawBody === 'string' ? rawBody : JSON.stringify(rawBody);
+  if (!signature || !secret) {
+    return { success: false, status: 401, message: 'Webhook signature authentication is required.' };
+  }
+  if (!Buffer.isBuffer(rawBody)) {
+    return { success: false, status: 400, message: 'Webhook body must be raw bytes.' };
+  }
 
-  if (signature) {
-    try {
-      const isValid = Razorpay.validateWebhookSignature(bodyString, signature, secret);
-      if (!isValid) {
-        logDecision({
-          event: 'WEBHOOK_SIGNATURE_INVALID',
-          result: 'REJECTED',
-          details: { event_id: eventId }
-        });
-        return { success: false, status: 400, message: 'Invalid webhook signature.' };
-      }
-    } catch (err) {
-      // If validation error occurs, fail closed unless in simulation mode
-      if (process.env.NODE_ENV !== 'test' && !signature.startsWith('test_sig_')) {
-        return { success: false, status: 400, message: `Signature validation failed: ${err.message}` };
-      }
+  const bodyString = rawBody.toString('utf8');
+  try {
+    const isValid = Razorpay.validateWebhookSignature(bodyString, signature, secret);
+    if (!isValid) {
+      logDecision({
+        event: 'WEBHOOK_SIGNATURE_INVALID',
+        result: 'REJECTED',
+        details: { event_id: eventId }
+      });
+      return { success: false, status: 401, message: 'Invalid webhook signature.' };
     }
+  } catch (err) {
+    return { success: false, status: 400, message: `Signature validation failed: ${err.message}` };
   }
 
   // 2. Event Deduplication by X-Razorpay-Event-Id
@@ -54,7 +55,12 @@ export async function handleRazorpayWebhook({
     store.seenWebhookEvents.add(eventId);
   }
 
-  const payload = typeof rawBody === 'string' ? JSON.parse(rawBody) : rawBody;
+  let payload;
+  try {
+    payload = JSON.parse(bodyString);
+  } catch {
+    return { success: false, status: 400, message: 'Webhook body is not valid JSON.' };
+  }
   const event = payload?.event;
   const paymentEntity = payload?.payload?.payment?.entity;
   const orderId = paymentEntity?.order_id || payload?.payload?.order?.entity?.id;

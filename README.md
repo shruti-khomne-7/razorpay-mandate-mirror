@@ -40,6 +40,7 @@ Mandate Mirror is an authorization firewall for autonomous AI purchasing agents.
 ```bash
 cd backend
 npm install
+# Copy .env.example to .env and configure MANDATE_API_KEYS and MANDATE_SECRET_KEY.
 npm start
 ```
 *Backend starts on `http://localhost:5000`.*
@@ -51,6 +52,14 @@ npm install
 npm run dev
 ```
 *Dashboard opens on `http://localhost:5173` (or Vite assigned port).*
+
+### Demo clean slate
+
+Before a live demo, stop the backend and run `npm run demo:reset` from the
+repository root. It clears mandate configurations, buckets, audit entries, and
+idempotency records from MongoDB. This reset is explicit and never runs when
+the server starts. Configure the matching `VITE_MANDATE_API_KEY` in the
+frontend environment before opening the dashboard.
 
 
 ---

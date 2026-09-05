@@ -9,6 +9,7 @@
     "benchmark": "node benchmarks/run_benchmark.js",
     "benchmark:claim-b": "python ml-scorer/train_baseline.py",
     "server": "npm --prefix backend start",
-    "dashboard": "npm --prefix frontend dev"
+    "dashboard": "npm --prefix frontend dev",
+    "demo:reset": "node backend/scripts/reset_demo_state.js"
   }
 }

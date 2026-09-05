@@ -39,7 +39,9 @@ router.post('/concurrency-race', async (req, res) => {
       cumulative_cap: cumulativeCap,
       cumulative_window: 'P1M',
       velocity_limit: 100,
-      allowed_categories: ['grocery']
+      allowed_categories: ['grocery'],
+      valid_from: '2020-01-01T00:00:00.000Z',
+      valid_until: '2030-01-01T00:00:00.000Z'
     }));
 
     await attemptAtomicSpend({

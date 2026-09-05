@@ -61,7 +61,27 @@ export async function persistMandateConfig(config) {
     );
   } catch (err) {
     console.error(`[MongoDB] Error saving mandate ${config.mandate_id}:`, err.message);
+    throw err;
   }
+}
+
+/**
+ * Delete all stateful demo records. This is intentionally explicit and is
+ * never called by server startup, so normal deployments cannot be reset by a
+ * restart.
+ */
+export async function clearPersistentDemoState() {
+  if (!isConnected || !db) {
+    throw new Error('MongoDB is not connected; persistent demo state could not be cleared.');
+  }
+
+  const collections = ['mandate_configs', 'buckets', 'audit_logs', 'idempotency'];
+  const deleted = {};
+  for (const collection of collections) {
+    const result = await db.collection(collection).deleteMany({});
+    deleted[collection] = result.deletedCount;
+  }
+  return deleted;
 }
 
 /**
@@ -88,6 +108,7 @@ export async function atomicMongoBucketSpend({
   bucket_key,
   amount_paise,
   cumulative_cap,
+  velocity_limit,
   nonce,
   category,
   nowMs,
@@ -104,12 +125,24 @@ export async function atomicMongoBucketSpend({
       );
     }
 
+    // Keep database enforcement aligned with the state-machine checks. These
+    // predicates run in the same atomic find-and-update as the cap/nonce test.
     const filter = {
       bucket_key,
       $expr: {
-        $lte: [
-          { $add: ['$cumulative_spend', '$pending_spend', amount_paise] },
-          cumulative_cap
+        $and: [
+          {
+            $lte: [
+              { $add: [{ $ifNull: ['$cumulative_spend', 0] }, { $ifNull: ['$pending_spend', 0] }, amount_paise] },
+              cumulative_cap
+            ]
+          },
+          {
+            $lte: [
+              { $add: [{ $ifNull: ['$transaction_count', 0] }, 1] },
+              velocity_limit
+            ]
+          }
         ]
       }
     };

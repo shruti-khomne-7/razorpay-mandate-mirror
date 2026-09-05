@@ -19,6 +19,17 @@ import {
   completeRequest,
   releaseRequest
 } from '../src/core/idempotency.js';
+import { signMandate } from '../src/core/mandateSigner.js';
+
+function registerTestMandate(mandate) {
+  return registerMandate(signMandate({
+    allowed_categories: ['grocery'],
+    // Fixed range keeps explicit-time bucket tests valid independently of today.
+    valid_from: '2020-01-01T00:00:00.000Z',
+    valid_until: '2030-01-01T00:00:00.000Z',
+    ...mandate
+  }));
+}
 
 describe('M1 — Bucketed Atomic State Machine', () => {
   beforeEach(() => {
@@ -31,7 +42,7 @@ describe('M1 — Bucketed Atomic State Machine', () => {
   test('Race: 20 concurrent requests for ₹150 slot in ₹5,000 cap — exactly 1 succeeds', async () => {
     const mandateId = 'mandate_race_001';
 
-    registerMandate({
+    registerTestMandate({
       mandate_id: mandateId,
       principal_id: 'alice',
       agent_id: 'grocery_bot',
@@ -81,7 +92,7 @@ describe('M1 — Bucketed Atomic State Machine', () => {
   test('Nonce replay: 10 concurrent requests with duplicate nonce — exactly 1 succeeds', async () => {
     const mandateId = 'mandate_nonce_001';
 
-    registerMandate({
+    registerTestMandate({
       mandate_id: mandateId,
       principal_id: 'bob',
       agent_id: 'procurement_bot',
@@ -114,7 +125,7 @@ describe('M1 — Bucketed Atomic State Machine', () => {
   test('Period bucketing: September bucket is full, October bucket starts at zero', async () => {
     const mandateId = 'mandate_period_001';
 
-    registerMandate({
+    registerTestMandate({
       mandate_id: mandateId,
       principal_id: 'carol',
       agent_id: 'monthly_bot',
@@ -166,7 +177,7 @@ describe('M1 — Bucketed Atomic State Machine', () => {
   test('Pending-spend: reservation blocks concurrent spends until committed', async () => {
     const mandateId = 'mandate_pending_001';
 
-    registerMandate({
+    registerTestMandate({
       mandate_id: mandateId,
       principal_id: 'dave',
       agent_id: 'pending_bot',
@@ -222,7 +233,7 @@ describe('M1 — Bucketed Atomic State Machine', () => {
   test('Pending TTL expiry: expired reservation auto-denies and frees capacity', async () => {
     const mandateId = 'mandate_ttl_001';
 
-    registerMandate({
+    registerTestMandate({
       mandate_id: mandateId,
       principal_id: 'eve',
       agent_id: 'ttl_bot',
