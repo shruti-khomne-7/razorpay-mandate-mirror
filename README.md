@@ -13,37 +13,32 @@ Mandate Mirror is an authorization firewall for autonomous AI purchasing agents.
 
 ```mermaid
 flowchart TD
+    A[AI Buyer Agent] -->|HTTP POST /authorize| B[Idempotency Gate]
+    B --> C{Gate 1 — Deterministic Verifier}
 
-    A[Principal / User] -->|Mandate & permissions| B[Buyer Agent LLM]
+    C -->|signature invalid · expired · hard cap breached| D[HARD-BLOCK]
+    C -->|signature, expiry, category, per-txn cap all pass| E[Investigator Agent<br/>Gemini function-calling, non-binding]
 
-    B -->|Purchase request<br/>items, amount, merchant| C[Mandate Mirror Core]
+    E --> F{Gate 2 — Guard Rechecker<br/>imports Gate 1's verifyDeterministicBounds}
 
-    subgraph C[Mandate Mirror Core - Stateful Authorization & Risk Analysis]
+    F -->|CLEAR confirmed| H[Atomic Conditional Write]
+    F -->|STEP-UP / ESCALATE recommended| I[Pending-Spend Reservation<br/>TTL 10min, fail-closed]
+    F -->|CLEAR recommendation violates a hard rule| G[Override → ESCALATE, logged]
+    G --> I
 
-        D[Gate 1 - Deterministic Check<br/><br/>HMAC signature<br/>Nonce validation<br/>Per-transaction caps<br/>Category & merchant allowlists]
+    H -->|cumulative + pending + amount ≤ cap ?| J{Write succeeds?}
+    J -->|no — lost the race| K[DENIED: Cap Exceeded]
+    J -->|yes| L[Razorpay Test-Mode Order]
 
-        E[State Machine Engine<br/><br/>Cumulative spend tracking<br/>Calendar period buckets<br/>Pending reservations<br/>Concurrency-safe updates]
+    I --> M[Human Review Queue]
+    M -->|approve| H
+    M -->|deny or TTL expires| N[Reservation Released]
 
-        F[Investigator Agent LLM<br/><br/>Analyzes historical trajectory<br/>Detects behavioral anomalies<br/>Produces advisory recommendation]
-
-        G[Guard Rechecker - Gate 3<br/><br/>Enforces zero-drift safety invariant<br/>Overrides unsafe recommendations<br/>Final decision: CLEAR / BLOCK / STEP_UP]
-
-        D --> E --> F --> G
-    end
-
-    C -->|State & configuration| H[(MongoDB)]
-
-    C -->|Decisions & reasoning| I[Hash-Chained Audit Trail]
-
-    G -->|CLEAR| J[Razorpay Test Mode]
-
-    G -->|BLOCK| K[Block Request]
-
-    G -->|STEP_UP| L[User Approval]
-
-    G -->|Decision + explanation| B
-
-    J -->|Order status / webhook| A
+    D --> O[(Hash-Chained Audit Log)]
+    K --> O
+    L --> O
+    N --> O
+    G --> O
 ```
 ---
 
