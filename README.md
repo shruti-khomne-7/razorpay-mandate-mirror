@@ -11,8 +11,40 @@ Mandate Mirror is an authorization firewall for autonomous AI purchasing agents.
 ---
 ## System Architecture
 
-![Mandate Mirror Architecture](docs/architecture.png)
+```mermaid
+flowchart TD
 
+    A[Principal / User] -->|Mandate & permissions| B[Buyer Agent LLM]
+
+    B -->|Purchase request<br/>items, amount, merchant| C[Mandate Mirror Core]
+
+    subgraph C[Mandate Mirror Core - Stateful Authorization & Risk Analysis]
+
+        D[Gate 1 - Deterministic Check<br/><br/>HMAC signature<br/>Nonce validation<br/>Per-transaction caps<br/>Category & merchant allowlists]
+
+        E[State Machine Engine<br/><br/>Cumulative spend tracking<br/>Calendar period buckets<br/>Pending reservations<br/>Concurrency-safe updates]
+
+        F[Investigator Agent LLM<br/><br/>Analyzes historical trajectory<br/>Detects behavioral anomalies<br/>Produces advisory recommendation]
+
+        G[Guard Rechecker - Gate 3<br/><br/>Enforces zero-drift safety invariant<br/>Overrides unsafe recommendations<br/>Final decision: CLEAR / BLOCK / STEP_UP]
+
+        D --> E --> F --> G
+    end
+
+    C -->|State & configuration| H[(MongoDB)]
+
+    C -->|Decisions & reasoning| I[Hash-Chained Audit Trail]
+
+    G -->|CLEAR| J[Razorpay Test Mode]
+
+    G -->|BLOCK| K[Block Request]
+
+    G -->|STEP_UP| L[User Approval]
+
+    G -->|Decision + explanation| B
+
+    J -->|Order status / webhook| A
+```
 ---
 
 
